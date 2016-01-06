@@ -51,7 +51,6 @@ FrodoSC: $(SCOBJS)
 install: Frodo FrodoSC installdirs
 	$(INSTALL_PROGRAM) Frodo $(DESTDIR)$(bindir)/Frodo
 	$(INSTALL_PROGRAM) FrodoSC $(DESTDIR)$(bindir)/FrodoSC
-	$(INSTALL_DATA) ../Kernal\ ROM $(DESTDIR)$(datadir)/frodo/Kernal\ ROM
 	$(INSTALL_DATA) glade/Frodo.glade $(DESTDIR)$(datadir)/frodo/Frodo.glade
 	$(INSTALL_DATA) maemo/frodo.desktop $(DESTDIR)$(datadir)/applications/hildon/frodo.desktop
 	$(INSTALL_DATA) maemo/frodo.service $(DESTDIR)$(datadir)/dbus-1/services/frodo.service

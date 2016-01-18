@@ -89,7 +89,9 @@ static void create_joystick_menu(const char *widget_name)
 	GtkWidget *menu = gtk_menu_new();
 
 	for (int i = -1; i < SDL_NumJoysticks(); ++i) {
-		GtkWidget *item = gtk_menu_item_new_with_label(i < 0 ? "None" : SDL_JoystickName(i));
+		SDL_Joystick *joystick = i < 0 ? NULL : SDL_JoystickOpen(i);
+		GtkWidget *item = gtk_menu_item_new_with_label(!joystick ? "None" : SDL_JoystickName(joystick));
+		SDL_JoystickClose(joystick);
 		gtk_widget_show(item);
 		gtk_menu_append(GTK_MENU(menu), item);
 	}

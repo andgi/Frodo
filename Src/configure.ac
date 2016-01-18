@@ -26,7 +26,7 @@ AC_ISC_POSIX
 
 dnl Checks for libraries.
 AC_CHECK_LIB(vga, vga_setmode, HAVE_SVGA_LIB=yes, HAVE_SVGA_LIB=no)
-AM_PATH_SDL(1.2.0, HAVE_SDL=yes, HAVE_SDL=no)
+AM_PATH_SDL2(2.0.0, HAVE_SDL=yes, HAVE_SDL=no)
 
 EMBEDDED_EXTENSION=none
 AC_MSG_CHECKING([if Frodo should be compiled with extensions for an embedded device])

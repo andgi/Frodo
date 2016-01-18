@@ -3,6 +3,7 @@
  *                  SDL specific stuff
  *
  *  Frodo Copyright (C) Christian Bauer
+ *  Updated to SDL2 by Anders Gidenstam  2016.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -35,7 +36,13 @@ static const int FRAME_WIDTH = DISPLAY_X;
 static const int FRAME_HEIGHT = DISPLAY_Y + 16;
 
 // Display surface
+static SDL_Window *window = NULL;
+static SDL_Renderer *renderer = NULL;
+static SDL_Texture *texture = NULL;
 static SDL_Surface *screen = NULL;
+static SDL_Surface *screen_truecolor = NULL;
+static int fullscreen_width = -1;
+static int fullscreen_height = -1;
 
 // Keyboard
 static bool num_locked = false;
@@ -166,8 +173,8 @@ C64Display::C64Display(C64 *the_c64) : TheC64(the_c64)
 	speedometer_string[0] = 0;
 
 	// Open window
-	SDL_WM_SetCaption(VERSION_STRING, "Frodo");
-	uint32 flags = (ThePrefs.DisplayType == DISPTYPE_SCREEN ? SDL_FULLSCREEN : 0);
+	uint32 flags = (ThePrefs.DisplayType == DISPTYPE_SCREEN ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+	flags |= SDL_WINDOW_RESIZABLE;
 
 #ifdef ENABLE_OPENGL
 
@@ -300,10 +307,36 @@ C64Display::C64Display(C64 *the_c64) : TheC64(the_c64)
 
 #else
 
-	flags |= (SDL_HWSURFACE | SDL_DOUBLEBUF);
-	screen = SDL_SetVideoMode(FRAME_WIDTH, FRAME_HEIGHT, 8, flags);
-
+	// Create the SDL main window and the various surfaces and textures
+	window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, FRAME_WIDTH, FRAME_HEIGHT, flags);
+	if (!window) {
+		fprintf(stderr, "SDL_CreateWindow failed: %s", SDL_GetError());
+		exit(1);
+	}
+	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
+	if (!renderer) {
+		fprintf(stderr, "SDL_CreateRenderer failed: %s", SDL_GetError());
+		exit(1);
+	}
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+	SDL_RenderSetLogicalSize(renderer, FRAME_WIDTH, FRAME_HEIGHT);
+	texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
+	if (!texture) {
+		fprintf(stderr, "SDL_CreateTexture failed: %s", SDL_GetError());
+		exit(1);
+	}
+	screen = SDL_CreateRGBSurface(0, FRAME_WIDTH, FRAME_HEIGHT, 8, 0, 0, 0, 0);
+	if (!screen) {
+		fprintf(stderr, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
+		exit(1);
+	}
+	screen_truecolor = SDL_CreateRGBSurface(0, FRAME_WIDTH, FRAME_HEIGHT, 32, 0, 0, 0, 0);
+	if (!screen_truecolor) {
+		fprintf(stderr, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
+		exit(1);
+	}
 #endif
+	SDL_SetWindowTitle(window, VERSION_STRING);
 
 	// Hide mouse pointer in fullscreen mode
 	if (ThePrefs.DisplayType == DISPTYPE_SCREEN)
@@ -435,7 +468,19 @@ void C64Display::Update(void)
 	SDL_GL_SwapBuffers();
 #else
 	// Update display
-	SDL_Flip(screen);
+	// See http://sandervanderburg.blogspot.se/2014/05/rendering-8-bit-palettized-surfaces-in.html
+	//   Draw the 8-bit surface to a 32-bit one.
+	SDL_BlitSurface(screen, NULL, screen_truecolor, NULL);
+	//   Lock the texture and copy the 32-bit surface into it.
+	void* pixels;
+	int pitch;
+	SDL_LockTexture(texture, NULL, &pixels, &pitch);
+	SDL_ConvertPixels(screen_truecolor->w, screen_truecolor->h, screen_truecolor->format->format, screen_truecolor->pixels, screen_truecolor->pitch, SDL_PIXELFORMAT_ARGB8888, pixels, pitch);
+	SDL_UnlockTexture(texture);
+	//    Draw the texture to the window and display it.
+	SDL_RenderClear(renderer);
+	SDL_RenderCopy(renderer, texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 #endif
 }
 
@@ -526,7 +571,7 @@ int C64Display::BitmapXMod(void)
  *  Poll the keyboard
  */
 
-static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
+static void translate_key(SDL_Keycode key, bool key_up, uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
 	int c64_key = -1;
 	switch (key) {
@@ -594,8 +639,8 @@ static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev
 		case SDLK_RCTRL: c64_key = MATRIX(7,5); break;
 		case SDLK_LSHIFT: c64_key = MATRIX(1,7); break;
 		case SDLK_RSHIFT: c64_key = MATRIX(6,4); break;
-		case SDLK_LALT: case SDLK_LMETA: c64_key = MATRIX(7,5); break;
-		case SDLK_RALT: case SDLK_RMETA: c64_key = MATRIX(7,5); break;
+		case SDLK_LALT: case SDLK_LGUI: c64_key = MATRIX(7,5); break;
+		case SDLK_RALT: case SDLK_RGUI: c64_key = MATRIX(7,5); break;
 
 		case SDLK_UP: c64_key = MATRIX(0,7)| 0x80; break;
 		case SDLK_DOWN: c64_key = MATRIX(0,7); break;
@@ -611,15 +656,15 @@ static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev
 		case SDLK_F7: c64_key = MATRIX(0,3); break;
 		case SDLK_F8: c64_key = MATRIX(0,3) | 0x80; break;
 
-		case SDLK_KP0: case SDLK_KP5: c64_key = 0x10 | 0x40; break;
-		case SDLK_KP1: c64_key = 0x06 | 0x40; break;
-		case SDLK_KP2: c64_key = 0x02 | 0x40; break;
-		case SDLK_KP3: c64_key = 0x0a | 0x40; break;
-		case SDLK_KP4: c64_key = 0x04 | 0x40; break;
-		case SDLK_KP6: c64_key = 0x08 | 0x40; break;
-		case SDLK_KP7: c64_key = 0x05 | 0x40; break;
-		case SDLK_KP8: c64_key = 0x01 | 0x40; break;
-		case SDLK_KP9: c64_key = 0x09 | 0x40; break;
+		case SDLK_KP_0: case SDLK_KP_5: c64_key = 0x10 | 0x40; break;
+		case SDLK_KP_1: c64_key = 0x06 | 0x40; break;
+		case SDLK_KP_2: c64_key = 0x02 | 0x40; break;
+		case SDLK_KP_3: c64_key = 0x0a | 0x40; break;
+		case SDLK_KP_4: c64_key = 0x04 | 0x40; break;
+		case SDLK_KP_6: c64_key = 0x08 | 0x40; break;
+		case SDLK_KP_7: c64_key = 0x05 | 0x40; break;
+		case SDLK_KP_8: c64_key = 0x01 | 0x40; break;
+		case SDLK_KP_9: c64_key = 0x09 | 0x40; break;
 
 		case SDLK_KP_DIVIDE: c64_key = MATRIX(6,7); break;
 		case SDLK_KP_ENTER: c64_key = MATRIX(0,1); break;
@@ -678,18 +723,30 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 					case SDLK_F10:	// F10: Prefs/Quit
 						TheC64->Pause();
 						if (ThePrefs.DisplayType == DISPTYPE_SCREEN) {  // exit fullscreen mode
-							SDL_WM_ToggleFullScreen(SDL_GetVideoSurface());
+							SDL_GetWindowSize(window, &fullscreen_width, &fullscreen_height);
+							fprintf(stderr, "Switching to window mode. Resizing from %dx%d to %dx%d.\n", fullscreen_width, fullscreen_height, FRAME_WIDTH, FRAME_HEIGHT);
+
+							SDL_SetWindowFullscreen(window, 0);
+							SDL_SetWindowBordered(window, SDL_TRUE);
+							SDL_SetWindowSize(window, FRAME_WIDTH, FRAME_HEIGHT);
+
 							SDL_ShowCursor(1);
 						}
+						SDL_HideWindow(window);
 
 						if (!TheApp->RunPrefsEditor()) {
 							quit_requested = true;
 						} else {
+							SDL_ShowWindow(window);
 							if (ThePrefs.DisplayType == DISPTYPE_SCREEN) {  // enter fullscreen mode
+								fprintf(stderr, "Switching to fullscreen mode at %dx%d.\n", fullscreen_width, fullscreen_height);
+								SDL_SetWindowSize(window, fullscreen_width, fullscreen_height);
+								SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 								SDL_ShowCursor(0);
-								SDL_WM_ToggleFullScreen(SDL_GetVideoSurface());
+								SDL_SetWindowBordered(window, SDL_FALSE);
 							}
 						}
+						fprintf(stderr, "Resuming...\n");
 
 						TheC64->Resume();
 						break;
@@ -702,7 +759,7 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 						TheC64->Reset();
 						break;
 
-					case SDLK_NUMLOCK:
+					case SDLK_NUMLOCKCLEAR:
 						num_locked = true;
 						break;
 
@@ -727,7 +784,7 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 
 			// Key released
 			case SDL_KEYUP:
-				if (event.key.keysym.sym == SDLK_NUMLOCK)
+				if (event.key.keysym.sym == SDLK_NUMLOCKCLEAR)
 					num_locked = false;
 				else
 					translate_key(event.key.keysym.sym, true, key_matrix, rev_matrix, joystick);
@@ -739,6 +796,12 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 				video_resized(event.resize.w, event.resize.h);
 				break;
 #endif
+
+			// Window resized or expose - redraw
+			case SDL_WINDOWEVENT_SIZE_CHANGED:
+			case SDL_WINDOWEVENT_EXPOSED:
+				SDL_RenderPresent(renderer);
+				break;
 
 			// Quit Frodo
 			case SDL_QUIT:
@@ -852,7 +915,7 @@ void C64Display::InitColors(uint8 *colors)
 	palette[red].g = palette[red].b = 0;
 	palette[green].g = 0xf0;
 	palette[green].r = palette[green].b = 0;
-	SDL_SetColors(screen, palette, 0, PALETTE_SIZE);
+	SDL_SetPaletteColors(screen->format->palette, palette, 0, PALETTE_SIZE);
 
 	for (int i=0; i<256; i++)
 		colors[i] = i & 0x0f;

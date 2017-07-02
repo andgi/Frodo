@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([Frodo], [4.2])
+AC_INIT([Frodo], [4.3])
 AC_CONFIG_SRCDIR(main.cpp)
 AC_PREREQ(2.52)
 AC_CONFIG_HEADER(sysconfig.h)
@@ -30,13 +30,16 @@ AM_PATH_SDL2(2.0.0, HAVE_SDL=yes, HAVE_SDL=no)
 
 EMBEDDED_EXTENSION=none
 AC_MSG_CHECKING([if Frodo should be compiled with extensions for an embedded device])
-AC_ARG_WITH([embedded-extension], [AS_HELP_STRING([--with-embedded-extension=qtopia|maemo],[Specify which extension for Frodo on an embedded device should be used.])])
+AC_ARG_WITH([embedded-extension], [AS_HELP_STRING([--with-embedded-extension=qtopia|maemo|SDL-embedded],[Specify which extension for Frodo on an embedded device should be used.])])
 if [[ x"$with_embedded_extension" == "xqtopia" ]]; then
   EMBEDDED_EXTENSION=$with_embedded_extension
   AC_DEFINE(QTOPIA, 1, [Extension for Qtopia is enabled])
 elif [[ x"$with_embedded_extension" == "xmaemo" ]]; then
   EMBEDDED_EXTENSION=$with_embedded_extension
   AC_DEFINE(MAEMO, 1, [Extension for Maemo is enabled])
+elif [[ x"$with_embedded_extension" == "xSDL-embedded" ]]; then
+  EMBEDDED_EXTENSION=$with_embedded_extension
+  AC_DEFINE(SDL_EMBEDDED, 1, [Extension for SDL without external UI is enabled])
 fi
 AC_MSG_RESULT([$EMBEDDED_EXTENSION])
 
@@ -91,17 +94,7 @@ AC_ARG_ENABLE(kbd-lang-de,[  --enable-kbd-lang-de    Use german keyboard layout]
 AC_ARG_ENABLE(kbd-lang-us,[  --enable-kbd-lang-us    Use american keyboard layout],[KBD_LANG=0],[])
 
 AC_MSG_CHECKING(which target to use)
-if [[ x"$no_x" = "xyes" ]]; then
-  if [[ x"$HAVE_SVGA_LIB" = "xyes" ]]; then
-    AC_MSG_RESULT([SVGAlib])
-    TARGET=svgalib
-    CFLAGS="$CFLAGS -D__svgalib__"
-    LIBS="$LIBS -lvga"
-  else
-    AC_MSG_RESULT([Ummm...])
-    AC_MSG_ERROR([Neither X nor SVGAlib found, don't know what target to use.])
-  fi
-elif [[ x"$HAVE_SDL" = "xyes" ]]; then
+if [[ x"$HAVE_SDL" = "xyes" ]]; then
   AC_MSG_RESULT([SDL])
   TARGET=sdl
   CFLAGS="$CFLAGS $SDL_CFLAGS -DHAVE_SDL"
@@ -122,6 +115,16 @@ elif [[ x"$HAVE_SDL" = "xyes" ]]; then
     else
       AC_MSG_WARN([Could not find OpenGL, ignoring --enable-opengl.])
     fi
+  fi
+elif [[ x"$no_x" = "xyes" ]]; then
+  if [[ x"$HAVE_SVGA_LIB" = "xyes" ]]; then
+    AC_MSG_RESULT([SVGAlib])
+    TARGET=svgalib
+    CFLAGS="$CFLAGS -D__svgalib__"
+    LIBS="$LIBS -lvga"
+  else
+    AC_MSG_RESULT([Ummm...])
+    AC_MSG_ERROR([Neither X, SDL nor SVGAlib found, don't know what target to use.])
   fi
 else
   AC_MSG_RESULT([X Window System])

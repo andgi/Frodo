@@ -6,6 +6,7 @@
  *
  * Copyright (c) 2001 Thomas Huth - taken from his hatari project
  * Copyright (c) 2002-2005 Petr Stehlik of ARAnyM dev team (see AUTHORS)
+ * Updated to SDL2 by Anders Gidenstam  2017.
  *
  * It is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -115,7 +116,7 @@ bool SDLGui_Init(SDL_Surface *GUISurface)
   }
 
   /* Set font color 0 as transparent */
-  SDL_SetColorKey(fontgfx, SDL_SRCCOLORKEY, 0);
+  SDL_SetColorKey(fontgfx, SDL_TRUE, 0);
 
   /* Get the font width and height: */
   fontwidth = fontgfx->w/16;
@@ -232,7 +233,8 @@ void SDLGui_UpdateRect(SDL_Rect *rect)
     rect->h = (sdlscrn->h - rect->y);
 
   if ((rect->w > 0) && (rect->h > 0))
-    SDL_UpdateRects(sdlscrn, 1, rect);
+    ;
+    //SDL_UpdateRects(sdlscrn, 1, rect); // FIXME SDL2!
   else
   {
     rect->x = 0;
@@ -279,7 +281,7 @@ void SDLGui_Text(int x, int y, const char *txt, SDL_Color *col)
   char c;
   SDL_Rect sr, dr;
 
-  SDL_SetColors(fontgfx, col, 1, 1);
+  SDL_SetPaletteColors(fontgfx->format->palette, col, 1, 1);
 
   screenlock();
   for (i = 0 ; txt[i] != 0 ; i++)
@@ -1050,8 +1052,7 @@ int SDLGui_MouseClick(SGOBJ *dlg, int fx, int fy, cursor_state *cursor)
   while (clicked_obj >= 0)
   {
     SDL_Event evnt;
-    // SDL_PumpEvents() - not necessary, the main check_event thread calls it
-    if (SDL_PeepEvents(&evnt, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_USEREVENT)))
+    if (SDL_PeepEvents(&evnt, 1, SDL_GETEVENT, SDL_USEREVENT, SDL_USEREVENT))
     {
       switch (evnt.user.code)
       {
@@ -1186,13 +1187,13 @@ int SDLGui_KeyPress(SGOBJ *dlg, int keysym, int mod, cursor_state *cursor)
         break;
 
       default:
-        if ((keysym >= SDLK_KP0) && (keysym <= SDLK_KP9))
+        if ((keysym >= SDLK_KP_0) && (keysym <= SDLK_KP_9))
         {
           // map numpad numbers to normal numbers
-          keysym -= (SDLK_KP0 - SDLK_0);
+          keysym -= (SDLK_KP_0 - SDLK_0);
         }
         /* If it is a "good" key then insert it into the text field */
-        if ((keysym >= SDLK_SPACE) && (keysym < SDLK_KP0))
+        if ((keysym >= SDLK_SPACE) && (keysym < SDLK_KP_0))
         {
           if (strlen(dlg[cursor->object].txt) < dlg[cursor->object].w)
           {
@@ -1277,10 +1278,10 @@ SDL_Rect *SDLGui_GetNextBackgroundRect(void)
       {
         // The dialog is not drawn yet...
         // Let's redraw the full screen.
-      	BackgroundRect.x = 0;
-      	BackgroundRect.y = 0;
-      	BackgroundRect.w = sdlscrn->w;
-      	BackgroundRect.h = sdlscrn->h;
+        BackgroundRect.x = 0;
+        BackgroundRect.y = 0;
+        BackgroundRect.w = sdlscrn->w;
+        BackgroundRect.h = sdlscrn->h;
         return_rect = &BackgroundRect;
         // We reached the end of the list.
         BackgroundRectCounter = SG_BCKGND_RECT_END;
@@ -1296,10 +1297,10 @@ SDL_Rect *SDLGui_GetNextBackgroundRect(void)
       BackgroundRectCounter = SG_BCKGND_RECT_LEFT;
       if (DialogRect.y > 0)
       {
-      	BackgroundRect.x = 0;
-      	BackgroundRect.y = 0;
-      	BackgroundRect.w = sdlscrn->w;
-      	BackgroundRect.h = DialogRect.y;
+        BackgroundRect.x = 0;
+        BackgroundRect.y = 0;
+        BackgroundRect.w = sdlscrn->w;
+        BackgroundRect.h = DialogRect.y;
         return_rect = &BackgroundRect;
       }
       else
@@ -1365,33 +1366,33 @@ SDL_Event getEvent(SGOBJ *dlg, cursor_state *cursor)
   while(1) {
     SDL_Event evnt;
 //    fprintf(stderr, "Debug Before Peep events\n");
-    if (SDL_PeepEvents(&evnt, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_USEREVENT)))
+    if (SDL_PeepEvents(&evnt, 1, SDL_GETEVENT, SDL_USEREVENT, SDL_USEREVENT))
     {
-	fprintf(stderr, "Debug Peep events %d\n",i++);
+      fprintf(stderr, "Debug Peep events %d\n",i++);
       SDL_Event e;
       switch(evnt.user.code)
       {
-      	case SDL_KEYDOWN:
-	case SDL_KEYUP:
-	  e.type = evnt.user.code;
-          e.key.keysym.sym = (SDLKey)reinterpret_cast<uintptr>(evnt.user.data1);
-          e.key.keysym.mod = (SDLMod)reinterpret_cast<uintptr>(evnt.user.data2);
-	  return e;
+        case SDL_KEYDOWN:
+        case SDL_KEYUP:
+          e.type = evnt.user.code;
+          e.key.keysym.sym = reinterpret_cast<uintptr>(evnt.user.data1);
+          e.key.keysym.mod = reinterpret_cast<uintptr>(evnt.user.data2);
+          return e;
 
         case SDL_MOUSEBUTTONDOWN:
-	case SDL_MOUSEBUTTONUP:
-	  e.type = evnt.user.code;
-	if (evnt.user.code == SDL_MOUSEBUTTONDOWN)
-		fprintf(stderr, "Debug mouse down\n");
-	else
-		fprintf(stderr, "Debug mouse down\n");
+        case SDL_MOUSEBUTTONUP:
+          e.type = evnt.user.code;
+          if (evnt.user.code == SDL_MOUSEBUTTONDOWN)
+            fprintf(stderr, "Debug mouse down\n");
+          else
+            fprintf(stderr, "Debug mouse down\n");
           e.button.x = reinterpret_cast<intptr>(evnt.user.data1);
           e.button.y = reinterpret_cast<intptr>(evnt.user.data2);
-	  return e;
+          return e;
 
         case SDL_USEREVENT:
           // a signal that resolution has changed
-	  if (dlg != NULL)
+          if (dlg != NULL)
               SDLGui_DrawDialog(dlg);	// re-draw dialog
           break;
       }
@@ -1406,10 +1407,10 @@ SDL_Event getEvent(SGOBJ *dlg, cursor_state *cursor)
           if (cursor->blink_counter >= 10) {
             cursor->blink_counter = 0;
             cursor->blink_state = !cursor->blink_state;
-	    if (dlg != NULL)
+            if (dlg != NULL)
               SDLGui_DrawCursor(dlg, cursor);
           }
-	}
+      }
     }
   }
 }
@@ -1455,9 +1456,9 @@ int SDLGui_DoDialog(SGOBJ *dlg)
     fprintf(stderr, "Debug SDL main loop got event\n");
     switch(evnt.type)
       {
-      	case SDL_KEYDOWN:
+        case SDL_KEYDOWN:
           return_obj = SDLGui_KeyPress(dlg, evnt.key.keysym.sym, evnt.key.keysym.mod, &cursor);
-      	  break;
+          break;
 
         case SDL_MOUSEBUTTONDOWN:
           return_obj = SDLGui_MouseClick(dlg, evnt.button.x, evnt.button.y, &cursor);

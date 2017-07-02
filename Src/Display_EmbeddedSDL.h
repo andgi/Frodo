@@ -4,6 +4,7 @@
  *
  *  Frodo (C) 1994-1997,2002-2009 Christian Bauer
  *  Changes for embedded Linux devices (Qtopia, Maemo) (C) 2006 Bernd Lachner
+ *  Updated to SDL2 and generalized for any SDL target by Anders Gidenstam  2017.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -33,9 +34,12 @@
 #include <SDL_thread.h>
 
 // Display surface
-static SDL_Surface *screen = 0;
-static SDL_Surface *backgroundSurf = 0;
-static SDL_Surface *surf = 0;
+static SDL_Window   *window = 0;
+static SDL_Renderer *renderer = 0;
+static SDL_Texture  *texture = 0;
+static SDL_Surface  *c64_screen = 0;
+static SDL_Surface  *gui_screen = 0;
+static SDL_Surface  *screen_truecolor = 0;
 
 static SDL_mutex *screenLock = 0;
 
@@ -89,10 +93,10 @@ enum
 
 char *buffer;
 
-int width = 320;
-int height = 240;
+const int FRAME_WIDTH = DISPLAY_X;
+const int FRAME_HEIGHT = DISPLAY_Y;
 
-bool isGuiAvailable = true; // TODO from main.cpp
+bool isGuiAvailable = true; // TODO from main.cpp // FIXME SDL2
 bool GUIOpened = false;
 
 static SDL_Thread *GUIthread = NULL;
@@ -101,49 +105,37 @@ static bool doUpdate = true;
 
 void update( int32 x, int32 y, int32 w, int32 h, bool forced )
 {
+	//fprintf(stderr, "C64Display::update(): Redraw!\n");
 	if ( !forced && !doUpdate ) // the HW surface is available
 		return;
 
-	//	SDL_UpdateRect(SDL_GetVideoSurface(), 0, 0, width, height);
-	// SDL_UpdateRect(surf, x, y, w, h);
-	SDL_UpdateRect(screen, x, y, w, h);
+	// See http://sandervanderburg.blogspot.se/2014/05/rendering-8-bit-palettized-surfaces-in.html
+	//   Draw the 8-bit surface to a 32-bit one.
+	if (!GUIOpened) {
+		SDL_BlitSurface(c64_screen, NULL, screen_truecolor, NULL);
+	} else {
+		SDL_BlitSurface(gui_screen, NULL, screen_truecolor, NULL);
+	}
+	//   Lock the texture and copy the 32-bit surface into it.
+	void* pixels;
+	int pitch;
+	SDL_LockTexture(texture, NULL, &pixels, &pitch);
+	SDL_ConvertPixels(screen_truecolor->w, screen_truecolor->h, screen_truecolor->format->format, screen_truecolor->pixels, screen_truecolor->pitch, SDL_PIXELFORMAT_ARGB8888, pixels, pitch);
+	SDL_UnlockTexture(texture);
+	//    Draw the texture to the window and display it.
+	SDL_RenderClear(renderer);
+	SDL_RenderCopy(renderer, texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 }
 
 void update( bool forced )
 {
-	update( 0, 0, width, height, forced );
+	update( 0, 0, FRAME_WIDTH, FRAME_HEIGHT, forced );
 }
 
 void update()
 {
-	update( 0, 0, width, height, false );
-}
-
-void restoreBackground()
-{
-	if (backgroundSurf != NULL) {
-		SDL_BlitSurface(backgroundSurf, NULL, screen, NULL);
-		update(true);
-		fprintf(stderr, "video surface restored\n");
-	}
-}
-
-void allocateBackgroundSurf()
-{
-	// allocate new background video surface
-	backgroundSurf = SDL_ConvertSurface(screen, screen->format, screen->flags);
-	fprintf(stderr, "Allocating background video surface\n");
-}
-
-void freeBackgroundSurf()
-{
-	// free background video surface
-	if (backgroundSurf != NULL) 
-	{
-		fprintf(stderr, "Freeing background video surface\n");
-		SDL_FreeSurface(backgroundSurf);
-		backgroundSurf = NULL;
-	}
+	update( 0, 0, FRAME_WIDTH, FRAME_HEIGHT, false );
 }
 
 void openGUI()
@@ -154,44 +146,13 @@ void openGUI()
 		fprintf(stderr, "GUI is already open!\n");
 		return;
 	}
-	allocateBackgroundSurf();
-	surf = backgroundSurf;
 	GUIOpened = true;
 }
 
 void closeGUI()
 {
 	fprintf(stderr, "close GUI\n");
-	// update the main surface and then redirect VDI to it
-	restoreBackground();
-	surf = screen;			// redirect VDI to main surface
-	fprintf(stderr, "VDI redirected back to main video surface\n");
-	freeBackgroundSurf();
 	GUIOpened = false;
-}
-
-void saveBackground()
-{
-	if (backgroundSurf != NULL) {
-		SDL_BlitSurface(screen, NULL, backgroundSurf, NULL);
-		surf = backgroundSurf;	// redirect VDI to background surface
-		fprintf(stderr, "video surface saved to background, VDI redirected\n");
-	}
-}
-
-void blendBackgrounds()
-{
-	if (backgroundSurf != NULL) 
-	{
-		SDL_Rect *Rect;
-		Rect = SDLGui_GetFirstBackgroundRect();
-		while (Rect != NULL) 
-		{
-			SDL_BlitSurface(backgroundSurf, Rect, screen, Rect);
-			Rect = SDLGui_GetNextBackgroundRect();
-		}
-		update(true);
-	}
 }
 
 static Prefs DialogPrefs; 
@@ -208,8 +169,9 @@ static int open_gui(void * /*ptr*/)
 	ev.type = GUI_RETURN_INFO;
 	ev.user.code = status;	// STATUS_SHUTDOWN or STATUS_REBOOT
 	ev.user.data1 = NULL;
-	SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, SDL_EVENTMASK(GUI_RETURN_INFO));
+	SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, GUI_RETURN_INFO, GUI_RETURN_INFO);
 	closeGUI();
+        fprintf(stderr, "C64Display::open_gui(): End of GUI thread.\n");
 	return 0;
 }
 
@@ -217,7 +179,7 @@ bool start_GUI_thread()
 {
 	if (isGuiAvailable) // TODO && !hostScreen.isGUIopen()) 
 	{
-		GUIthread = SDL_CreateThread(open_gui, NULL);
+		GUIthread = SDL_CreateThread(open_gui, "GUI_Thread", NULL);
 	}
 	return (GUIthread != NULL);
 }
@@ -225,7 +187,6 @@ bool start_GUI_thread()
 void kill_GUI_thread()
 {
 	if (GUIthread != NULL) {
-		SDL_KillThread(GUIthread);
 		GUIthread = NULL;
 	}
 }
@@ -260,19 +221,47 @@ int init_graphics(void)
 
 	buffer = new char[DISPLAY_X*DISPLAY_Y];
 	// Open window
-	SDL_WM_SetCaption(VERSION_STRING, "Frodo");
-	screen = SDL_SetVideoMode(320, 240, 8, SDL_DOUBLEBUF);
-	surf = screen;
-	if (screen == NULL)
+	// Create the SDL main window and the various surfaces and textures
+	window = SDL_CreateWindow("Frodo", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 3*FRAME_WIDTH, 3*FRAME_HEIGHT, 0/*SDL_WINDOW_FULLSCREEN_DESKTOP*/);
+	if (!window)
 	{
-		fprintf(stderr, "SDL Couldn't set video mode to %d x %d\n", DISPLAY_X, DISPLAY_Y+17);
+		fprintf(stderr, "SDL_CreateWindow failed: %s", SDL_GetError());
+		return 0;
 	}
-	else
+	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
+	if (!renderer) {
+		fprintf(stderr, "SDL_CreateRenderer failed: %s", SDL_GetError());
+		return 0;
+	}
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+	SDL_RenderSetLogicalSize(renderer, FRAME_WIDTH, FRAME_HEIGHT);
+	texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
+	if (!texture) {
+		fprintf(stderr, "SDL_CreateTexture failed: %s", SDL_GetError());
+		return 0;
+	}
+
+	c64_screen = SDL_CreateRGBSurface(0, FRAME_WIDTH, FRAME_HEIGHT, 8, 0, 0, 0, 0);
+	if (c64_screen == NULL)
 	{
-		fprintf(stderr, "SDL Set video mode to %d x %d\n", DISPLAY_X, DISPLAY_Y+17);
-		SDLGui_Init(screen);
-		start_GUI_thread();
+		fprintf(stderr, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
+		return 0;
 	}
+
+	gui_screen = SDL_CreateRGBSurface(0, FRAME_WIDTH, FRAME_HEIGHT, 8, 0, 0, 0, 0);
+	if (gui_screen == NULL)
+	{
+		fprintf(stderr, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
+		return 0;
+	}
+
+	screen_truecolor = SDL_CreateRGBSurface(0, FRAME_WIDTH, FRAME_HEIGHT, 32, 0, 0, 0, 0);
+	if (!screen_truecolor) {
+		fprintf(stderr, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
+		return 0;
+	}
+	SDLGui_Init(gui_screen);
+
 	return 1;
 }
 
@@ -332,6 +321,7 @@ void C64Display::NewPrefs(Prefs *prefs)
 void C64Display::Update(void)
 {
 	screenlock();
+	SDL_Surface *surf = c64_screen;
 	if (surf == NULL)
 		return;
 	int iOffsetX = (DISPLAY_X - surf->w) / 2;
@@ -401,9 +391,7 @@ void C64Display::Update(void)
 	draw_string(surf, 24, (surf->h - 17) + 4, speedometer_string, black, fill_gray);
 
 	// Update display
-	SDL_Flip(surf);
-
-	blendBackgrounds();
+	update(true);
 	screenunlock();
 }
 
@@ -502,7 +490,7 @@ int C64Display::BitmapXMod(void)
  *  Poll the keyboard
  */
 
-static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
+static void translate_key(SDL_Keycode key, bool key_up, uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
 	int c64_key = -1;
 	if (tab_pressed)
@@ -589,8 +577,8 @@ static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev
 			case SDLK_RCTRL: c64_key = MATRIX(7,5); break;
 			case SDLK_LSHIFT: c64_key = MATRIX(1,7); break;
 			case SDLK_RSHIFT: c64_key = MATRIX(6,4); break;
-			case SDLK_LALT: case SDLK_LMETA: c64_key = MATRIX(7,5); break;
-			case SDLK_RALT: case SDLK_RMETA: c64_key = MATRIX(7,5); break;
+			case SDLK_LALT: case SDLK_LGUI: c64_key = MATRIX(7,5); break;
+			case SDLK_RALT: case SDLK_RGUI: c64_key = MATRIX(7,5); break;
 
 			case SDLK_UP: c64_key = MATRIX(0,7)| 0x80; break;
 			case SDLK_DOWN: c64_key = MATRIX(0,7); break;
@@ -606,15 +594,15 @@ static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev
 			case SDLK_F7: c64_key = MATRIX(0,3); break;
 			case SDLK_F8: c64_key = MATRIX(0,3) | 0x80; break;
 
-			case SDLK_KP0: case SDLK_KP5: c64_key = 0x10 | 0x40; break;
-			case SDLK_KP1: c64_key = 0x06 | 0x40; break;
-			case SDLK_KP2: c64_key = 0x02 | 0x40; break;
-			case SDLK_KP3: c64_key = 0x0a | 0x40; break;
-			case SDLK_KP4: c64_key = 0x04 | 0x40; break;
-			case SDLK_KP6: c64_key = 0x08 | 0x40; break;
-			case SDLK_KP7: c64_key = 0x05 | 0x40; break;
-			case SDLK_KP8: c64_key = 0x01 | 0x40; break;
-			case SDLK_KP9: c64_key = 0x09 | 0x40; break;
+			case SDLK_KP_0: case SDLK_KP_5: c64_key = 0x10 | 0x40; break;
+			case SDLK_KP_1: c64_key = 0x06 | 0x40; break;
+			case SDLK_KP_2: c64_key = 0x02 | 0x40; break;
+			case SDLK_KP_3: c64_key = 0x0a | 0x40; break;
+			case SDLK_KP_4: c64_key = 0x04 | 0x40; break;
+			case SDLK_KP_6: c64_key = 0x08 | 0x40; break;
+			case SDLK_KP_7: c64_key = 0x05 | 0x40; break;
+			case SDLK_KP_8: c64_key = 0x01 | 0x40; break;
+			case SDLK_KP_9: c64_key = 0x09 | 0x40; break;
 
 			case SDLK_KP_DIVIDE: c64_key = MATRIX(6,7); break;
 			case SDLK_KP_ENTER: c64_key = MATRIX(0,1); break;
@@ -683,55 +671,47 @@ static void translate_key(SDLKey key, bool key_up, uint8 *key_matrix, uint8 *rev
 void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
 	SDL_Event event;
-	int eventmask = SDL_EVENTMASK(SDL_KEYDOWN)
-					| SDL_EVENTMASK(SDL_KEYUP)
-					| SDL_EVENTMASK(SDL_MOUSEBUTTONDOWN)
-					| SDL_EVENTMASK(SDL_MOUSEBUTTONUP)
-					| SDL_EVENTMASK(SDL_MOUSEMOTION)
-					| SDL_EVENTMASK(SDL_JOYAXISMOTION)
-					| SDL_EVENTMASK(SDL_JOYHATMOTION)
-					| SDL_EVENTMASK(SDL_JOYBUTTONDOWN)
-					| SDL_EVENTMASK(SDL_JOYBUTTONUP)
-					| SDL_EVENTMASK(SDL_ACTIVEEVENT)
-					| SDL_EVENTMASK(GUI_RETURN_INFO)
-					| SDL_EVENTMASK(SDL_QUIT);
-
 	SDL_PumpEvents();
-	while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, eventmask))
+	while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_USEREVENT - 1) ||
+	       SDL_PeepEvents(&event, 1, SDL_GETEVENT, GUI_RETURN_INFO, GUI_RETURN_INFO))
 	{
 		if (GUIOpened) 
 		{
+			//fprintf(stderr, "C64Display::PollKeyboard(): GUI Event!\n");
 			if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) 
 			{
-				if (event.type == SDL_MOUSEBUTTONDOWN)
+				/*if (event.type == SDL_MOUSEBUTTONDOWN)
 					fprintf(stderr, "Mouse down\n");
 				if (event.type == SDL_MOUSEBUTTONUP)
-					fprintf(stderr, "Mouse up\n");
+					fprintf(stderr, "Mouse up\n");*/
 				SDL_Event ev;
 				ev.type = SDL_USEREVENT;	// map button down/up to user event
 				ev.user.code = event.type;
 				ev.user.data1 = (void *)(int)event.button.x;
 				ev.user.data2 = (void *)(int)event.button.y;
-				SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, SDL_EVENTMASK(SDL_USEREVENT));
+				SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, SDL_USEREVENT, SDL_USEREVENT);
+				//fprintf(stderr, "C64Display::PollKeyboard(): Sent SDL_USEREVENT to GUI!\n");
 			}
 			else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)
 			{
-				if (event.type == SDL_KEYDOWN)
+				/*if (event.type == SDL_KEYDOWN)
 					fprintf(stderr, "Key down\n");
 				if (event.type == SDL_KEYUP)
-					fprintf(stderr, "Key up\n");
-				SDLKey sym = event.key.keysym.sym;
+					fprintf(stderr, "Key up\n");*/
+				SDL_Keycode sym = event.key.keysym.sym;
 				int state = SDL_GetModState(); // keysym.mod does not deliver single mod key presses for 
 				SDL_Event ev;
 				ev.type = SDL_USEREVENT;	// map key down/up event to user event
 				ev.user.code = event.type;
 				ev.user.data1 = (void *)(int)sym;
 				ev.user.data2 = (void *)(int)state;
-				SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, SDL_EVENTMASK(SDL_USEREVENT));
+				SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, SDL_USEREVENT, SDL_USEREVENT);
+				//fprintf(stderr, "C64Display::PollKeyboard(): Sent SDL_USEREVENT to GUI!\n");
 			}
 		}
 		else
 		{
+		//fprintf(stderr, "C64Display::PollKeyboard(): C64 Event!\n");
 		switch (event.type)
 		{
 			case GUI_RETURN_INFO:
@@ -759,7 +739,7 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 			}
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
-				start_GUI_thread();
+				//start_GUI_thread();
 				break;
 			// Key pressed
 			case SDL_KEYDOWN:
@@ -788,10 +768,13 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 							SAM(TheC64);
 							break;
 
-						case SDLK_F11:	// F10: Quit
-							// Iconify not implemented in Qtopia SDL yet. Quit instead show gui.
-							//SDL_WM_IconifyWindow();
-							quit_requested = true;
+						case SDLK_F10:	// F10: Prefs/Quit
+							if (!start_GUI_thread())
+								quit_requested = true;
+							break;
+
+						case SDLK_F11:	// F11: NMI (Restore)
+							TheC64->NMI();
 							break;
 
 						case SDLK_F12:	// F12: Reset
@@ -943,7 +926,8 @@ void C64Display::InitColors(uint8 *colors)
 	palette[red].g = palette[red].b = 0;
 	palette[green].g = 0xf0;
 	palette[green].r = palette[green].b = 0;
-	SDL_SetColors(screen, palette, 0, PALETTE_SIZE);
+	SDL_SetPaletteColors(c64_screen->format->palette, palette, 0, PALETTE_SIZE);
+	SDL_SetPaletteColors(gui_screen->format->palette, palette, 0, PALETTE_SIZE);
 
 	for (int i=0; i<256; i++)
 		colors[i] = i & 0x0f;

@@ -171,7 +171,7 @@ static int open_gui(void * /*ptr*/)
 	ev.user.data1 = NULL;
 	SDL_PeepEvents(&ev, 1, SDL_ADDEVENT, GUI_RETURN_INFO, GUI_RETURN_INFO);
 	closeGUI();
-        fprintf(stderr, "C64Display::open_gui(): End of GUI thread.\n");
+	fprintf(stderr, "C64Display::open_gui(): End of GUI thread.\n");
 	return 0;
 }
 
@@ -212,7 +212,7 @@ void screenunlock()
 int init_graphics(void)
 {
 	// Init SDL
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_AUDIO) < 0) {
 		fprintf(stderr, "Couldn't initialize SDL (%s)\n", SDL_GetError());
 		return 0;
 	}
@@ -734,6 +734,9 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 						ThePrefs = DialogPrefs;
 						ThePrefs.Save(Frodo::get_prefs_path());
 						break;
+					default:
+						TheC64->Resume();
+						break;
 				}
 				break;
 			}
@@ -769,6 +772,7 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 							break;
 
 						case SDLK_F10:	// F10: Prefs/Quit
+							TheC64->Pause();
 							if (!start_GUI_thread())
 								quit_requested = true;
 							break;

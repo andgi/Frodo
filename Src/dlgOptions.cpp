@@ -2,6 +2,7 @@
  *  dlgOptions.cpp - SDL GUI dialog for C64 emulator options
  *
  *  (C) 2006 Bernd Lachner
+ *  (C) 2017 Anders Gidenstam  Extended to more functional state.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -23,6 +24,8 @@
 
 #include "Prefs.h"
 
+#include <sstream>
+
 enum OPTIONSDDLG {
 	box_main,
 	box_speedcontrol,
@@ -43,6 +46,8 @@ enum OPTIONSDDLG {
 	OK,
 	CANCEL
 };
+
+static bool try_parse(char* s, int& i);
 
 /* The keyboard dialog: */
 /* Spalte, Zeile, Länge, Höhe*/
@@ -78,39 +83,63 @@ static SGOBJ optionsdlg[] =
 void Dialog_Options(Prefs &prefs)
 {
 	// Set values from prefs
-// TODO	optionsdlg[DRAW_EVERYNTH_FRAME].txt = prefs.SkipFrames;
 	optionsdlg[LIMIT_SPEED_TO100PERCENT].state |= prefs.LimitSpeed == true ? SG_SELECTED : 0;
 	optionsdlg[FAST_RESET].state |= prefs.FastReset == true ? SG_SELECTED : 0;
 	switch (prefs.REUSize)
 	{
-		case REU_NONE:
-			optionsdlg[RADIO_REU_NONE].state |= SG_SELECTED;	
-			break;
-		case REU_128K:
-			optionsdlg[RADIO_REU_128K].state |= SG_SELECTED;
-			break;
-		case REU_256K:
-			optionsdlg[RADIO_REU_256K].state |= SG_SELECTED;
-			break;
-		case REU_512K:
-			optionsdlg[RADIO_REU_512K].state |= SG_SELECTED;
-			break;		
+	case REU_NONE:
+		optionsdlg[RADIO_REU_NONE].state |= SG_SELECTED;
+		break;
+	case REU_128K:
+		optionsdlg[RADIO_REU_128K].state |= SG_SELECTED;
+		break;
+	case REU_256K:
+		optionsdlg[RADIO_REU_256K].state |= SG_SELECTED;
+		break;
+	case REU_512K:
+		optionsdlg[RADIO_REU_512K].state |= SG_SELECTED;
+		break;
 	}
-	switch (SDLGui_DoDialog(optionsdlg))
-	{
+
+	int skip = prefs.SkipFrames;
+	while (true) {
+		std::stringstream draw_every_nth;
+		draw_every_nth << skip;
+		optionsdlg[DRAW_EVERYNTH_FRAME].txt =
+			(char*)draw_every_nth.str().c_str();
+
+		switch (SDLGui_DoDialog(optionsdlg))
+		{
 		case OK:
 			// Set values to prefs
+			int tmp;
+			if (try_parse(optionsdlg[DRAW_EVERYNTH_FRAME].txt, tmp)) {				prefs.SkipFrames = tmp;
+			}
 			prefs.LimitSpeed = optionsdlg[LIMIT_SPEED_TO100PERCENT].state &= SG_SELECTED ? true : false;
 			prefs.FastReset = optionsdlg[FAST_RESET].state &= SG_SELECTED ? true : false;
-			for (int i = RADIO_REU_NONE; i <= RADIO_REU_512K; i++)
-			{
-				if (optionsdlg[i].state &= SG_SELECTED)
-				{
+			for (int i = RADIO_REU_NONE; i <= RADIO_REU_512K; i++) {
+				if (optionsdlg[i].state &= SG_SELECTED) {
 					prefs.REUSize = i - RADIO_REU_NONE;
 					break;
 				}
 			}
+			return;
+		case DRAW_EVERYNTH_FRAME_UP:
+			skip++;
 			break;
+		case DRAW_EVERYNTH_FRAME_DOWN:
+			if (skip > 1) {
+				skip--;
+			}
+			break;
+		}
 	}
 }
 
+static bool try_parse(char* s, int& i)
+{
+	std::stringstream ss(s);
+	char c;
+	ss >> i;
+	return !(ss.fail() || ss.get(c));
+}
